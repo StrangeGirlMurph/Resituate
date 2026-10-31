@@ -47,6 +47,19 @@ button:disabled:hover {
   background: #fff;
 }
 
+.toolbar-link {
+  display: inline-block;
+  color: #000;
+  background: #fff;
+  border: 1px solid #000;
+  padding: 4px 10px;
+  text-decoration: none;
+}
+
+.toolbar-link:hover {
+  background: #eee;
+}
+
 h1,
 h2 {
   font-weight: 600;
@@ -181,7 +194,8 @@ a {
   pointer-events: none;
 }
 
-.toolbar button {
+.toolbar button,
+.toolbar-link {
   pointer-events: auto;
 }
 

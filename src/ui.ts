@@ -127,6 +127,11 @@ export function createLanding(handlers: LandingHandlers): LandingView {
       browser so you can reconnect.
     </p>
 
+    <h2>Feedback</h2>
+    <p>
+      Please report issues or feature requests over <a href="https://github.com/StrangeGirlMurph/Resituate/issues">GitHub Issues</a> or via <a href="mailto:work@murphy.science">Email</a>.
+    </p>
+
     <footer>Resituate 0.1.0 - <a href="https://github.com/StrangeGirlMurph/Resituate">Source code on GitHub</a></footer>
   `;
 
@@ -178,6 +183,7 @@ export function createToolbar(handlers: ToolbarHandlers): ToolbarView {
     <button id="toolbar-undo" type="button" title="Undo the last GPS move (Ctrl/Cmd+Z)" disabled>Undo</button>
     <button id="toolbar-redo" type="button" title="Redo the last undone GPS move (Ctrl/Cmd+Shift+Z or Ctrl+Y)" disabled>Redo</button>
     <button id="toolbar-help" type="button" title="Show the help page, shortcuts, and metadata limitations.">Help</button>
+    <a class="toolbar-link" href="https://github.com/StrangeGirlMurph/Resituate/issues" target="_blank" rel="noopener noreferrer" title="Report an issue or request a feature.">Feedback</a>
   `;
 
   element.querySelector<HTMLButtonElement>('#toolbar-folder')!.addEventListener(
