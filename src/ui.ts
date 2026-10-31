@@ -127,7 +127,7 @@ export function createLanding(handlers: LandingHandlers): LandingView {
       browser so you can reconnect.
     </p>
 
-    <footer>Resituate 0.1.0</footer>
+    <footer>Resituate 0.1.0 - <a href="https://github.com/StrangeGirlMurph/Resituate">Source code on GitHub</a></footer>
   `;
 
   const openFolder = element.querySelector<HTMLButtonElement>('#open-folder')!;
