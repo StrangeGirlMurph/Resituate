@@ -35,11 +35,11 @@ export function createLanding(handlers: LandingHandlers): LandingView {
   const element = document.createElement('section');
   element.className = 'landing';
   element.innerHTML = `
-    <h1>Resituate - Geotagged Image Corrector</h1>
+    <h1>Resituate - Geotagged Image Cleanup</h1>
     <div id="browser-warning" class="browser-warning" role="alert" hidden></div>
     <p class="lead">
       Open local geotagged JPEGs, delete, preview or see them on a map and correct their GPS coordinates <strong>in place on your local disk</strong>. Supports
-      360° equirectangular images. Nothing is uploaded. Mainly built for cleaning up sequences of street-level imagery.
+      360° equirectangular images. Nothing is uploaded. Mainly built for cleaning up sequences of street-level 360° imagery.
     </p>
 
     <div class="landing-actions">

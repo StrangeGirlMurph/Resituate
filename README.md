@@ -1,4 +1,4 @@
-# Resituate — Geotagged Image Corrector
+# Resituate — Geotagged Image Cleanup
 
 See <https://resituate.murphy.science> for all the info.
 
