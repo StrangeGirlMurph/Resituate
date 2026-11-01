@@ -199,7 +199,7 @@ export async function ensurePermission(handle: FileSystemHandle): Promise<boolea
 
 export async function pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
   if (!window.showDirectoryPicker) {
-    throw new Error('This browser does not support folder access. Use Chrome or Edge.');
+    throw new Error('This browser does not support folder access. Use Chromium.');
   }
   try {
     return await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -211,7 +211,7 @@ export async function pickDirectory(): Promise<FileSystemDirectoryHandle | null>
 
 export async function pickFiles(): Promise<FileSystemFileHandle[]> {
   if (!window.showOpenFilePicker) {
-    throw new Error('This browser does not support file access. Use Chrome or Edge.');
+    throw new Error('This browser does not support file access. Use Chromium.');
   }
   try {
     return await window.showOpenFilePicker({

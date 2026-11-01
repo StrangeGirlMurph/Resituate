@@ -26,7 +26,7 @@ function setupBrowserWarning(element: HTMLElement): void {
 
   const text = document.createElement('p');
   text.textContent =
-    'Resituate needs a Chromium based browser with File System Access API support. Try again with Chrome, Edge, Opera, Brave, etc.';
+    'Resituate needs a Chromium based browser with File System Access API support. Try again with Ungoogled-Chromium, Chromium, Chrome, Edge, Opera, Brave, etc.';
 
   element.append(title, text);
 }
@@ -108,7 +108,7 @@ export function createLanding(handlers: LandingHandlers): LandingView {
 
     <h2>Browser support</h2>
     <p>
-      Resituate works only in Chromium based browsers (Chrome, Edge, Opera, Brave, etc.), because it relies on the
+      Resituate works only in Chromium based browsers (Ungoogled-Chromium, Chromium, Chrome, Edge, Opera, Brave, etc.), because it relies on the
       <a href="https://developer.mozilla.org/en-US/docs/Web/API/File_System_API"
          target="_blank" rel="noopener noreferrer">File System Access API</a>. It's also really meant to be used on a desktop with a mouse and keyboard. Touch and mobile layouts are not supported.
     </p>
