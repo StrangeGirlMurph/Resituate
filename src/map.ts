@@ -37,6 +37,14 @@ const SELECTION_STYLE: L.PolylineOptions = {
   interactive: false,
 };
 
+const SERIES_STYLE: L.PolylineOptions = {
+  color: '#1f6feb',
+  weight: 1,
+  opacity: 0.7,
+  pane: 'series',
+  interactive: false,
+};
+
 // Web Mercator's maximum extent. Keeping the map inside it (and starting the
 // minimum zoom at the level where the world fills the viewport) prevents
 // zooming or panning out into empty space.
@@ -62,6 +70,8 @@ export function createMapView(container: HTMLElement): MapView {
   const baseLayers = createBaseLayers();
   L.control.attribution({ position: 'bottomright' }).addTo(map);
   baseLayers[0].layer.addTo(map);
+  const seriesPane = map.createPane('series');
+  seriesPane.style.zIndex = '390';
 
   let layerSwitcher: LayerSwitcherControl | null = null;
   if (baseLayers.length > 1) {
@@ -83,9 +93,26 @@ export function createMapView(container: HTMLElement): MapView {
   syncMinZoom();
   map.on('resize', syncMinZoom);
 
+  const series = L.layerGroup().addTo(map);
   const layer = L.layerGroup().addTo(map);
   const markers = new Map<string, L.CircleMarker>();
   const photosById = new Map<string, Photo>();
+
+  function syncSeries(): void {
+    series.clearLayers();
+    const pointsByDirectory = new Map<string, [number, number][]>();
+    for (const photo of photosById.values()) {
+      if (!photo.gps) continue;
+      const separator = photo.relPath.lastIndexOf('/');
+      const directory = separator >= 0 ? photo.relPath.slice(0, separator) : '';
+      const points = pointsByDirectory.get(directory) ?? [];
+      points.push([photo.gps.lat, photo.gps.lon]);
+      pointsByDirectory.set(directory, points);
+    }
+    for (const points of pointsByDirectory.values()) {
+      if (points.length > 1) L.polyline(points, SERIES_STYLE).addTo(series);
+    }
+  }
 
   function addMarker(photo: Photo): void {
     if (!photo.gps) return;
@@ -106,6 +133,7 @@ export function createMapView(container: HTMLElement): MapView {
         photosById.set(photo.id, photo);
         addMarker(photo);
       }
+      syncSeries();
     },
 
     syncSelection(selection: Set<string>): void {
@@ -122,6 +150,7 @@ export function createMapView(container: HTMLElement): MapView {
           layer.removeLayer(marker);
           markers.delete(photo.id);
         }
+        syncSeries();
         return;
       }
       if (marker) {
@@ -129,6 +158,7 @@ export function createMapView(container: HTMLElement): MapView {
       } else {
         addMarker(photo);
       }
+      syncSeries();
     },
 
     fit(photos: Photo[]): void {
