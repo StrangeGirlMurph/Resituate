@@ -96,6 +96,32 @@ const WORLD_BOUNDS = L.latLngBounds([
   [85.05112878, 180],
 ]);
 
+// Zoom used when there is nothing to frame, and for a single photo (which has
+// no extent to fit).
+const EMPTY_ZOOM = 2;
+const SINGLE_PHOTO_ZOOM = 18;
+
+// The closest the initial fit is allowed to go. Fit zoom is derived from the
+// extent of the photos, so a tight cluster fills the viewport instead of
+// shrinking to a dot at a fixed level. 19 is where OSM's native imagery ends;
+// going further only upscales raster tiles.
+const MAX_FIT_ZOOM = 19;
+
+// Zooming is allowed below the native tile resolution (Leaflet scales the
+// raster tiles), so this is only a sanity limit.
+const MAX_ZOOM = 22;
+
+// Leaflet snaps zoom to whole levels by default, so the wheel jumps between
+// discrete tile levels and fitBounds rounds down to the next integer. A
+// quarter-level snap lets the wheel zoom smoothly and lets the fit land on the
+// exact extent of the photos.
+const ZOOM_SNAP = 0.25;
+const ZOOM_DELTA = 0.5;
+
+// One wheel notch is ~100 px of deltaY. Leaflet's default is 60, which moves a
+// whole level per notch; 120 halves that so each notch is a 0.5 level step.
+const WHEEL_PX_PER_ZOOM_LEVEL = 120;
+
 function createCrowdRadiusControl(
   initialRadius: number,
   onChange: (radius: number) => void,
@@ -176,7 +202,10 @@ export function createMapView(container: HTMLElement): MapView {
     scrollWheelZoom: true,
     maxBounds: WORLD_BOUNDS,
     maxBoundsViscosity: 1,
-    maxZoom: 22,
+    maxZoom: MAX_ZOOM,
+    zoomSnap: ZOOM_SNAP,
+    zoomDelta: ZOOM_DELTA,
+    wheelPxPerZoomLevel: WHEEL_PX_PER_ZOOM_LEVEL,
   });
 
   const baseLayers = createBaseLayers();
@@ -196,7 +225,7 @@ export function createMapView(container: HTMLElement): MapView {
     layerSwitcher.addTo(map);
   }
 
-  map.setView([0, 0], 2);
+  map.setView([0, 0], EMPTY_ZOOM);
 
   function syncMinZoom(): void {
     const size = map.getSize();
@@ -459,17 +488,20 @@ export function createMapView(container: HTMLElement): MapView {
     fit(photos: Photo[]): void {
       const geotagged = photos.filter((photo) => photo.gps);
       if (geotagged.length === 0) {
-        map.setView([0, 0], 2);
+        map.setView([0, 0], EMPTY_ZOOM);
         return;
       }
       if (geotagged.length === 1) {
         const { lat, lon } = geotagged[0].gps!;
-        map.setView([lat, lon], 18);
+        map.setView([lat, lon], SINGLE_PHOTO_ZOOM);
         return;
       }
+      // The zoom is whatever makes the photos fill the viewport, so a tight
+      // group of markers is framed closely instead of at a fixed level. Only
+      // the resolution of the raster basemap caps how far in this goes.
       map.fitBounds(
         L.latLngBounds(geotagged.map((photo) => [photo.gps!.lat, photo.gps!.lon])),
-        { padding: [40, 40], maxZoom: 16 },
+        { padding: [40, 40], maxZoom: MAX_FIT_ZOOM },
       );
     },
 
