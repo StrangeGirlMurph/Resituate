@@ -1,5 +1,10 @@
 import './styles.css';
-import { createInteractions, createMapView, type SelectionTool } from './map';
+import {
+  createInteractions,
+  createMapView,
+  type MapMode,
+  type SelectionTool,
+} from './map';
 import { validateArcgisKey } from './basemaps';
 import {
   clearSelection,
@@ -94,6 +99,8 @@ const mapView = createMapView(mapEl);
 let source: Source | null = null;
 let storedHandle: FileSystemDirectoryHandle | undefined;
 let tool: SelectionTool = 'rect';
+let mode: MapMode = 'select';
+let auxiliaryLine: Gps[] = [];
 let pendingWrite: Promise<void> = Promise.resolve();
 let previewClose: (() => void) | null = null;
 let previewPhotoId: string | null = null;
@@ -128,6 +135,9 @@ const interactions = createInteractions(mapEl, {
   photos: () => project.photos,
   selection: () => project.selection,
   tool: () => tool,
+  mode: () => mode,
+  onAddLinePoint: (gps) => addLinePoint(gps),
+  onLinePreview: (gps) => mapView.setAuxiliaryPreview(gps),
   onSelectOnly: (id) => selectOnly(project, id),
   onToggle: (id) => toggle(project, id),
   onSetSelection: (ids) => setSelection(project, ids),
@@ -296,6 +306,7 @@ async function loadFolder(handle: FileSystemDirectoryHandle): Promise<void> {
   await pendingWrite;
   closePreview();
   showMap();
+  resetAuxiliaryLine();
   undoStack.length = 0;
   redoStack.length = 0;
   status.setError(null);
@@ -342,6 +353,7 @@ async function loadFiles(handles: FileSystemFileHandle[]): Promise<void> {
   await pendingWrite;
   closePreview();
   showMap();
+  resetAuxiliaryLine();
   undoStack.length = 0;
   redoStack.length = 0;
   status.setError(null);
@@ -585,6 +597,86 @@ function commitMove(photos: Photo[], startGps: Map<string, Gps>): void {
     });
 }
 
+function addLinePoint(gps: Gps): void {
+  if (mode !== 'line') return;
+  auxiliaryLine.push(gps);
+  mapView.setAuxiliaryLine(auxiliaryLine);
+}
+
+function enterLineMode(): void {
+  mode = 'line';
+  auxiliaryLine = [];
+  mapView.setLineMode(true);
+  mapView.setAuxiliaryLine(auxiliaryLine);
+  status.setMode('line');
+  status.setHint(null);
+}
+
+function finishLineMode(): void {
+  mode = 'select';
+  const lineReady = auxiliaryLine.length >= 2;
+  if (!lineReady) {
+    auxiliaryLine = [];
+    mapView.setAuxiliaryLine(auxiliaryLine);
+  }
+  mapView.setLineMode(false);
+  status.setMode('selection');
+  status.setHint(
+    lineReady ? 'Line ready. Select markers and press S to snap.' : null,
+  );
+}
+
+function resetAuxiliaryLine(): void {
+  mode = 'select';
+  auxiliaryLine = [];
+  mapView.setLineMode(false);
+  mapView.setAuxiliaryLine(auxiliaryLine);
+  status.setMode('selection');
+  status.setHint(null);
+}
+
+function snapSelectionToLine(): void {
+  if (mode !== 'select') return;
+  if (auxiliaryLine.length < 2) {
+    status.setHint('Draw an auxiliary line first (H).');
+    return;
+  }
+
+  const photos = selectedPhotos(project).filter((photo) => photo.gps);
+  if (photos.length === 0) {
+    status.setHint('Select geotagged markers to snap first.');
+    return;
+  }
+
+  const before = new Map<string, Gps>();
+  const snappedPhotos: Photo[] = [];
+  for (const photo of photos) {
+    const snapped = mapView.projectToAuxiliaryLine(photo.gps!);
+    if (!snapped) continue;
+    // Treat sub-millimetre differences as "already on the line" so pressing S
+    // twice does not rewrite files for a marker that did not really move.
+    if (
+      Math.abs(snapped.lat - photo.gps!.lat) < 1e-9 &&
+      Math.abs(snapped.lon - photo.gps!.lon) < 1e-9
+    ) {
+      continue;
+    }
+    before.set(photo.id, { ...photo.gps! });
+    photo.gps = snapped;
+    photo.writeError = undefined;
+    mapView.updateMarker(photo);
+    snappedPhotos.push(photo);
+  }
+
+  if (snappedPhotos.length === 0) {
+    status.setHint('The selected markers are already on the line.');
+    return;
+  }
+
+  status.setHint(null);
+  commitMove(snappedPhotos, before);
+}
+
 async function applyHistory(
   operation: MoveOperation,
   which: 'before' | 'after',
@@ -731,6 +823,11 @@ document.addEventListener('keydown', (event) => {
       event.preventDefault();
       return;
     }
+    if (!mapViewEl.hidden && mode === 'line') {
+      finishLineMode();
+      event.preventDefault();
+      return;
+    }
     if (project.selection.size > 0) {
       clearSelection(project);
       event.preventDefault();
@@ -768,6 +865,33 @@ document.addEventListener('keydown', (event) => {
   ) {
     event.preventDefault();
     mapView.toggleBaseLayer();
+    return;
+  }
+
+  if (
+    !previewPhotoId &&
+    !inField &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === 'h'
+  ) {
+    event.preventDefault();
+    if (mode === 'line') finishLineMode();
+    else enterLineMode();
+    return;
+  }
+
+  if (
+    !previewPhotoId &&
+    !inField &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === 's'
+  ) {
+    event.preventDefault();
+    snapSelectionToLine();
     return;
   }
 

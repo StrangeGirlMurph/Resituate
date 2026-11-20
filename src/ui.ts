@@ -55,7 +55,7 @@ export function createLanding(handlers: LandingHandlers): LandingView {
       <li><strong>Open a folder</strong> (or individual JPEG images). Subfolders are scanned recursively. Your last folder is remembered so you can reconnect later.</li>
       <li><strong>Review the images.</strong> The sidebar lists images without GPS data or in an unsupported format (.png, .webp, etc.). Drag an image without GPS from the sidebar onto the map to give it a location.</li>
       <li><strong>Select the photos to fix.</strong> Click a marker, or drag a window around several. Add or remove from your selection as needed.</li>
-      <li><strong>Move your selection</strong> to a new location to correct for GPS drift. The whole selection moves together, and the new GPS coordinates are written to the files when you release the mouse. Undo/redo moves.</li>
+      <li><strong>Move your selection</strong> to a new location to correct for GPS drift. The whole selection moves together, and the new GPS coordinates are written to the files when you release the mouse. Undo/redo moves. Optionally use an auxiliary line to snap markers onto.</li>
       <li><strong>Spot clusters.</strong> Markers turn from blue through purple to red where many photos are close together. Change the crowd radius at the top right to control what counts as close.</li>
       <li><strong>Clean up.</strong> Delete unwanted files permanently (files are not moved to the system trash).</li>
       <li><strong>Check the result.</strong> Switch layers and zoom or pan to confirm the new positions.</li>
@@ -86,6 +86,8 @@ export function createLanding(handlers: LandingHandlers): LandingView {
         <tr><td>Left-drag a marker</td><td>Move the selected marker(s)</td></tr>
         <tr><td>Left-drag a sidebar row without GPS onto the map</td><td>Set the image's GPS position</td></tr>
         <tr><td>Left-drag on the map</td><td>Select an area</td></tr>
+        <tr><td>Left-click while drawing an auxiliary line</td><td>Add a point to the line</td></tr>
+        <tr><td>Move the pointer while drawing an auxiliary line</td><td>Preview the next segment</td></tr>
         <tr><td>Right-drag</td><td>Pan the map</td></tr>
         <tr><td>Wheel / double-click</td><td>Zoom in or out</td></tr>
 
@@ -100,7 +102,9 @@ export function createLanding(handlers: LandingHandlers): LandingView {
         <tr><td><kbd>Tab</kbd></td><td>Switch between rectangle and lasso selection</td></tr>
         <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Previous / next image while previewing (follows the file names)</td></tr>
         <tr><td><kbd>L</kbd></td><td>Switch between the imagery options</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Close the preview, cancel a drag, or clear the selection</td></tr>
+        <tr><td><kbd>H</kbd></td><td>Start and finish an auxiliary line. Starting a new line clears the previous one</td></tr>
+        <tr><td><kbd>S</kbd></td><td>Snap the selected markers orthogonally onto the auxiliary line</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close the preview, cancel a drag, finish an auxiliary line, or clear the selection</td></tr>
         <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td><td>Delete the selected files from disk. In a preview, delete the current image and show the next</td></tr>
         <tr><td><kbd>Ctrl/Cmd</kbd> + <kbd>Z</kbd></td><td>Undo the last GPS move</td></tr>
         <tr><td><kbd>Ctrl/Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> / <kbd>Ctrl</kbd> + <kbd>Y</kbd></td><td>Redo the last GPS move</td></tr>
@@ -357,6 +361,8 @@ export interface StatusView {
   render: (project: Project) => void;
   setActivity: (value: string | null) => void;
   setError: (value: string | null) => void;
+  setHint: (value: string | null) => void;
+  setMode: (value: 'selection' | 'line') => void;
 }
 
 export function createStatusBar(): StatusView {
@@ -365,6 +371,9 @@ export function createStatusBar(): StatusView {
   let lastProject: Project | null = null;
   let activity: string | null = null;
   let error: string | null = null;
+  let hint: string | null = null;
+  let hintTimer: number | undefined;
+  let mode: 'selection' | 'line' = 'selection';
 
   function render(project: Project): void {
     lastProject = project;
@@ -377,7 +386,10 @@ export function createStatusBar(): StatusView {
       (photo) => photo.kind === 'unsupported',
     ).length;
 
-    let text = `${total} files · ${onMap} on map · ${noGps} without GPS · ${unsupported} unsupported · ${project.selection.size} selected`;
+    const modeLabel = mode === 'line' ? 'Auxiliary line mode' : 'Selection mode';
+    let text = modeLabel;
+    if (hint) text += ` · ${hint}`;
+    text += ` · ${total} files · ${onMap} on map · ${noGps} without GPS · ${unsupported} unsupported · ${project.selection.size} selected`;
     if (activity) text += ` · ${activity}`;
     if (error) text += ` · ${error}`;
     element.textContent = text;
@@ -392,6 +404,25 @@ export function createStatusBar(): StatusView {
     },
     setError(value: string | null): void {
       error = value;
+      if (lastProject) render(lastProject);
+    },
+    setHint(value: string | null): void {
+      hint = value;
+      if (hintTimer !== undefined) {
+        window.clearTimeout(hintTimer);
+        hintTimer = undefined;
+      }
+      if (value) {
+        hintTimer = window.setTimeout(() => {
+          hint = null;
+          hintTimer = undefined;
+          if (lastProject) render(lastProject);
+        }, 4000);
+      }
+      if (lastProject) render(lastProject);
+    },
+    setMode(value: 'selection' | 'line'): void {
+      mode = value;
       if (lastProject) render(lastProject);
     },
   };

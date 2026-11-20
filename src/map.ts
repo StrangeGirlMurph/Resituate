@@ -6,10 +6,12 @@ import {
   type LayerSwitcherControl,
 } from './basemaps';
 import { crowdColor, neighborCounts } from './density';
+import { nearestPointOnPolyline, type Point2D } from './geometry';
 import type { Gps, Photo } from './types';
 import { clampLat, clampLon, PHOTO_DRAG_TYPE, sameGps } from './util';
 
 export type SelectionTool = 'rect' | 'lasso';
+export type MapMode = 'select' | 'line';
 
 export interface MapView {
   map: L.Map;
@@ -20,6 +22,10 @@ export interface MapView {
   hitTest(point: L.Point): Photo | null;
   invalidate(): void;
   toggleBaseLayer(): void;
+  setLineMode(active: boolean): void;
+  setAuxiliaryLine(points: Gps[]): void;
+  setAuxiliaryPreview(point: Gps | null): void;
+  projectToAuxiliaryLine(gps: Gps): Gps | null;
 }
 
 const DEFAULT_CROWD_RADIUS = 3;
@@ -48,6 +54,39 @@ const SERIES_STYLE: L.PolylineOptions = {
   pane: 'series',
   interactive: false,
 };
+
+const AUXILIARY_LINE_STYLE: L.PolylineOptions = {
+  color: '#2b7a3d',
+  weight: 3,
+  opacity: 0.95,
+  dashArray: '8 5',
+  pane: 'auxiliary',
+  interactive: false,
+};
+
+const AUXILIARY_POINT_STYLE: L.CircleMarkerOptions = {
+  radius: 4,
+  color: '#ffffff',
+  weight: 1,
+  fillColor: '#2b7a3d',
+  fillOpacity: 1,
+  pane: 'auxiliary',
+  interactive: false,
+};
+
+// The segment from the last node to the cursor, shown while drawing.
+const AUXILIARY_PREVIEW_STYLE: L.PolylineOptions = {
+  color: '#2b7a3d',
+  weight: 2,
+  opacity: 0.5,
+  dashArray: '4 6',
+  pane: 'auxiliary',
+  interactive: false,
+};
+
+// Project into Web Mercator at a fixed, high zoom so the snapping maths is
+// independent of the current map view.
+const PROJECTION_ZOOM = 20;
 
 // Web Mercator's maximum extent. Keeping the map inside it (and starting the
 // minimum zoom at the level where the world fills the viewport) prevents
@@ -148,6 +187,8 @@ export function createMapView(container: HTMLElement): MapView {
   baseLayers[0].layer.addTo(map);
   const seriesPane = map.createPane('series');
   seriesPane.style.zIndex = '390';
+  const auxiliaryPane = map.createPane('auxiliary');
+  auxiliaryPane.style.zIndex = '395';
 
   let layerSwitcher: LayerSwitcherControl | null = null;
   if (baseLayers.length > 1) {
@@ -171,6 +212,10 @@ export function createMapView(container: HTMLElement): MapView {
 
   const series = L.layerGroup().addTo(map);
   const layer = L.layerGroup().addTo(map);
+  const auxiliaryLine = L.layerGroup().addTo(map);
+  const auxiliaryPreview = L.polyline([], AUXILIARY_PREVIEW_STYLE).addTo(map);
+  let auxiliaryPoints: L.LatLng[] = [];
+  let auxiliaryProjected: Point2D[] = [];
   const markers = new Map<string, L.CircleMarker>();
   const photosById = new Map<string, Photo>();
   const seriesLines = new Map<string, L.Polyline>();
@@ -244,12 +289,59 @@ export function createMapView(container: HTMLElement): MapView {
     });
   }
 
+  function setAuxiliaryLine(points: Gps[]): void {
+    auxiliaryLine.clearLayers();
+    auxiliaryPoints = points.map((point) => L.latLng(point.lat, point.lon));
+    auxiliaryProjected = auxiliaryPoints.map((point) => {
+      const projected = map.project(point, PROJECTION_ZOOM);
+      return { x: projected.x, y: projected.y };
+    });
+
+    if (auxiliaryPoints.length > 1) {
+      L.polyline(auxiliaryPoints, AUXILIARY_LINE_STYLE).addTo(auxiliaryLine);
+    }
+    for (const point of auxiliaryPoints) {
+      L.circleMarker(point, AUXILIARY_POINT_STYLE).addTo(auxiliaryLine);
+    }
+  }
+
+  function setAuxiliaryPreview(point: Gps | null): void {
+    if (!point || auxiliaryPoints.length === 0) {
+      auxiliaryPreview.setLatLngs([]);
+      return;
+    }
+    const last = auxiliaryPoints[auxiliaryPoints.length - 1];
+    auxiliaryPreview.setLatLngs([last, L.latLng(point.lat, point.lon)]);
+  }
+
+  function projectToAuxiliaryLine(gps: Gps): Gps | null {
+    if (auxiliaryProjected.length === 0) return null;
+    const projected = map.project(L.latLng(gps.lat, gps.lon), PROJECTION_ZOOM);
+    const nearest = nearestPointOnPolyline(
+      { x: projected.x, y: projected.y },
+      auxiliaryProjected,
+    );
+    if (!nearest) return null;
+    const latLng = map.unproject(L.point(nearest.x, nearest.y), PROJECTION_ZOOM);
+    return { lat: clampLat(latLng.lat), lon: clampLon(latLng.lng) };
+  }
+
+  function setLineMode(active: boolean): void {
+    container.classList.toggle('line-mode', active);
+    if (active) {
+      map.doubleClickZoom.disable();
+    } else {
+      map.doubleClickZoom.enable();
+      setAuxiliaryPreview(null);
+    }
+  }
+
   function markerStyle(id: string): L.CircleMarkerOptions {
     const selected = selection.has(id);
     return {
       fillColor: selected ? '#e0a020' : crowdColor(neighborCountsById.get(id) ?? 0),
-      // Keep the density colour visible while selected; use an orange ring
-      // instead of replacing the fill like the old selection highlight did.
+      // Selected markers replace the density colour with the selection orange;
+      // unselected markers keep their crowding colour.
       color: '#ffffff',
       weight: 1,
     };
@@ -404,6 +496,11 @@ export function createMapView(container: HTMLElement): MapView {
     toggleBaseLayer(): void {
       layerSwitcher?.toggle();
     },
+
+    setLineMode,
+    setAuxiliaryLine,
+    setAuxiliaryPreview,
+    projectToAuxiliaryLine,
   };
 }
 
@@ -412,6 +509,9 @@ interface InteractionOptions {
   photos: () => Photo[];
   selection: () => Set<string>;
   tool: () => SelectionTool;
+  mode: () => MapMode;
+  onAddLinePoint: (gps: Gps) => void;
+  onLinePreview: (gps: Gps | null) => void;
   onSelectOnly: (id: string) => void;
   onToggle: (id: string) => void;
   onSetSelection: (ids: string[]) => void;
@@ -574,6 +674,19 @@ export function createInteractions(
 
     if (event.button !== 0 || isControl(event.target)) return;
 
+    if (options.mode() === 'line') {
+      const latLng = map.containerPointToLatLng(containerPoint(container, event));
+      options.onAddLinePoint({
+        lat: clampLat(latLng.lat),
+        lon: clampLon(latLng.lng),
+      });
+      // The new node sits under the cursor; the preview catches up on the next
+      // pointer move.
+      options.onLinePreview(null);
+      event.preventDefault();
+      return;
+    }
+
     const point = containerPoint(container, event);
     const photo = view.hitTest(point);
     const ctrl = event.ctrlKey || event.metaKey;
@@ -608,8 +721,6 @@ export function createInteractions(
   }
 
   function onPointerMove(event: PointerEvent): void {
-    if (state.kind === 'idle') return;
-
     if (state.kind === 'pan') {
       const dx = event.clientX - state.x;
       const dy = event.clientY - state.y;
@@ -619,6 +730,17 @@ export function createInteractions(
       event.preventDefault();
       return;
     }
+
+    if (state.kind === 'idle' && options.mode() === 'line') {
+      const latLng = map.containerPointToLatLng(containerPoint(container, event));
+      options.onLinePreview({
+        lat: clampLat(latLng.lat),
+        lon: clampLon(latLng.lng),
+      });
+      return;
+    }
+
+    if (state.kind === 'idle') return;
 
     if (state.kind === 'pressing') {
       if (Math.hypot(event.clientX - state.x, event.clientY - state.y) <= 4) return;
@@ -773,10 +895,15 @@ export function createInteractions(
     container.classList.remove('map-drop-target');
   }
 
+  function onPointerLeave(): void {
+    if (options.mode() === 'line') options.onLinePreview(null);
+  }
+
   container.addEventListener('pointerdown', onPointerDown);
   container.addEventListener('pointermove', onPointerMove);
   container.addEventListener('pointerup', onPointerUp);
   container.addEventListener('pointercancel', onPointerCancel);
+  container.addEventListener('pointerleave', onPointerLeave);
   container.addEventListener('contextmenu', onContextMenu);
   container.addEventListener('dragover', onDragOver);
   container.addEventListener('dragleave', onDragLeave);
