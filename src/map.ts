@@ -69,6 +69,9 @@ export function createMapView(container: HTMLElement): MapView {
 
   const baseLayers = createBaseLayers();
   L.control.attribution({ position: 'bottomright' }).addTo(map);
+  L.control
+    .scale({ position: 'bottomright', imperial: false, maxWidth: 110 })
+    .addTo(map);
   baseLayers[0].layer.addTo(map);
   const seriesPane = map.createPane('series');
   seriesPane.style.zIndex = '390';
@@ -97,21 +100,71 @@ export function createMapView(container: HTMLElement): MapView {
   const layer = L.layerGroup().addTo(map);
   const markers = new Map<string, L.CircleMarker>();
   const photosById = new Map<string, Photo>();
+  const seriesLines = new Map<string, L.Polyline>();
+  let seriesFrame: number | undefined;
 
+  function seriesKey(photo: Photo): string {
+    const separator = photo.relPath.lastIndexOf('/');
+    return separator >= 0 ? photo.relPath.slice(0, separator) : '';
+  }
+
+  function byCaptureTime(a: Photo, b: Photo): number {
+    return (
+      a.captureTime.getTime() - b.captureTime.getTime() ||
+      a.relPath.localeCompare(b.relPath)
+    );
+  }
+
+  /**
+   * Rebuild the path of every folder's sequence. Capture time gives the order,
+   * so a series does not depend on lexicographic file names (IMG_10 would come
+   * before IMG_2). Existing polylines are updated in place so live marker
+   * dragging does not recreate the whole series layer on every pointer move.
+   */
   function syncSeries(): void {
-    series.clearLayers();
-    const pointsByDirectory = new Map<string, [number, number][]>();
+    const photosByDirectory = new Map<string, Photo[]>();
     for (const photo of photosById.values()) {
       if (!photo.gps) continue;
-      const separator = photo.relPath.lastIndexOf('/');
-      const directory = separator >= 0 ? photo.relPath.slice(0, separator) : '';
-      const points = pointsByDirectory.get(directory) ?? [];
-      points.push([photo.gps.lat, photo.gps.lon]);
-      pointsByDirectory.set(directory, points);
+      const key = seriesKey(photo);
+      const photos = photosByDirectory.get(key);
+      if (photos) photos.push(photo);
+      else photosByDirectory.set(key, [photo]);
     }
-    for (const points of pointsByDirectory.values()) {
-      if (points.length > 1) L.polyline(points, SERIES_STYLE).addTo(series);
+
+    for (const [key, photos] of photosByDirectory) {
+      const line = seriesLines.get(key);
+      if (photos.length < 2) {
+        if (line) {
+          series.removeLayer(line);
+          seriesLines.delete(key);
+        }
+        continue;
+      }
+      photos.sort(byCaptureTime);
+      const points = photos.map(
+        (photo) => [photo.gps!.lat, photo.gps!.lon] as [number, number],
+      );
+      if (line) line.setLatLngs(points);
+      else seriesLines.set(key, L.polyline(points, SERIES_STYLE).addTo(series));
     }
+
+    for (const [key, line] of seriesLines) {
+      if (photosByDirectory.has(key)) continue;
+      series.removeLayer(line);
+      seriesLines.delete(key);
+    }
+  }
+
+  /**
+   * Coalesce the per-photo `updateMarker` calls made while dragging a
+   * selection into one series rebuild per animation frame.
+   */
+  function scheduleSeriesSync(): void {
+    if (seriesFrame !== undefined) return;
+    seriesFrame = requestAnimationFrame(() => {
+      seriesFrame = undefined;
+      syncSeries();
+    });
   }
 
   function addMarker(photo: Photo): void {
@@ -133,6 +186,10 @@ export function createMapView(container: HTMLElement): MapView {
         photosById.set(photo.id, photo);
         addMarker(photo);
       }
+      if (seriesFrame !== undefined) {
+        cancelAnimationFrame(seriesFrame);
+        seriesFrame = undefined;
+      }
       syncSeries();
     },
 
@@ -150,7 +207,7 @@ export function createMapView(container: HTMLElement): MapView {
           layer.removeLayer(marker);
           markers.delete(photo.id);
         }
-        syncSeries();
+        scheduleSeriesSync();
         return;
       }
       if (marker) {
@@ -158,7 +215,7 @@ export function createMapView(container: HTMLElement): MapView {
       } else {
         addMarker(photo);
       }
-      syncSeries();
+      scheduleSeriesSync();
     },
 
     fit(photos: Photo[]): void {
