@@ -5,6 +5,7 @@ import {
   createLayerSwitcher,
   type LayerSwitcherControl,
 } from './basemaps';
+import { crowdColor, neighborCounts } from './density';
 import type { Gps, Photo } from './types';
 import { clampLat, clampLon, PHOTO_DRAG_TYPE, sameGps } from './util';
 
@@ -21,11 +22,14 @@ export interface MapView {
   toggleBaseLayer(): void;
 }
 
+const DEFAULT_CROWD_RADIUS = 3;
+const MAX_CROWD_RADIUS = 10_000;
+
 const MARKER_STYLE: L.CircleMarkerOptions = {
   radius: 6,
   color: '#ffffff',
   weight: 1,
-  fillColor: '#1f6feb',
+  fillColor: crowdColor(0),
   fillOpacity: 1,
 };
 
@@ -52,6 +56,75 @@ const WORLD_BOUNDS = L.latLngBounds([
   [-85.05112878, -180],
   [85.05112878, 180],
 ]);
+
+function createCrowdRadiusControl(
+  initialRadius: number,
+  onChange: (radius: number) => void,
+): L.Control {
+  const control = new L.Control({ position: 'topright' });
+
+  control.onAdd = (): HTMLElement => {
+    const container = L.DomUtil.create('div', 'leaflet-control crowd-radius');
+    container.title =
+      'Markers are coloured by how many other photos are within this distance: blue is sparse, red is crowded.';
+
+    const label = document.createElement('label');
+    const text = document.createElement('span');
+    text.textContent = 'Crowdedness radius';
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0.1';
+    input.max = String(MAX_CROWD_RADIUS);
+    input.step = '0.5';
+    input.value = String(initialRadius);
+    input.setAttribute('aria-label', 'Crowdedness radius in meters');
+    input.title = 'Distance in meters used to count nearby photos.';
+
+    const unit = document.createElement('span');
+    unit.textContent = 'm';
+
+    let currentRadius = initialRadius;
+
+    function readRadius(): number | null {
+      const value = Number(input.value);
+      if (!Number.isFinite(value) || value <= 0) return null;
+      return Math.min(value, MAX_CROWD_RADIUS);
+    }
+
+    input.addEventListener('input', () => {
+      const value = readRadius();
+      if (value === null) return;
+      currentRadius = value;
+      onChange(value);
+    });
+
+    input.addEventListener('change', () => {
+      const value = readRadius();
+      if (value !== null) currentRadius = value;
+      input.value = String(currentRadius);
+      onChange(currentRadius);
+    });
+
+    // Escape would otherwise clear the selection. Other shortcuts are already
+    // ignored globally while an input has focus.
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        input.blur();
+        event.stopPropagation();
+      }
+    });
+
+    label.append(text, input, unit);
+    container.append(label);
+
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+    return container;
+  };
+
+  return control;
+}
 
 export function createMapView(container: HTMLElement): MapView {
   const map = L.map(container, {
@@ -102,6 +175,10 @@ export function createMapView(container: HTMLElement): MapView {
   const photosById = new Map<string, Photo>();
   const seriesLines = new Map<string, L.Polyline>();
   let seriesFrame: number | undefined;
+  let selection = new Set<string>();
+  let crowdRadius = DEFAULT_CROWD_RADIUS;
+  let neighborCountsById = new Map<string, number>();
+  let densityTimer: number | undefined;
 
   function seriesKey(photo: Photo): string {
     const separator = photo.relPath.lastIndexOf('/');
@@ -167,13 +244,79 @@ export function createMapView(container: HTMLElement): MapView {
     });
   }
 
+  function markerStyle(id: string): L.CircleMarkerOptions {
+    const selected = selection.has(id);
+    return {
+      fillColor: selected ? '#e0a020' : crowdColor(neighborCountsById.get(id) ?? 0),
+      // Keep the density colour visible while selected; use an orange ring
+      // instead of replacing the fill like the old selection highlight did.
+      color: '#ffffff',
+      weight: 1,
+    };
+  }
+
+  function applyMarkerStyle(id: string, marker: L.CircleMarker): void {
+    marker.setStyle(markerStyle(id));
+  }
+
+  function applyMarkerStyles(): void {
+    for (const [id, marker] of markers) applyMarkerStyle(id, marker);
+  }
+
+  function recomputeDensity(): void {
+    const previousCounts = neighborCountsById;
+    const nextCounts = neighborCounts([...photosById.values()], crowdRadius);
+    neighborCountsById = nextCounts;
+    for (const [id, count] of nextCounts) {
+      if ((previousCounts.get(id) ?? 0) === count) continue;
+      const marker = markers.get(id);
+      if (marker) applyMarkerStyle(id, marker);
+    }
+  }
+
+  function cancelDensitySync(): void {
+    if (densityTimer === undefined) return;
+    window.clearTimeout(densityTimer);
+    densityTimer = undefined;
+  }
+
+  /**
+   * Density is a review aid, not something that must keep up with every pixel
+   * of a drag. Debouncing keeps a large selection from recomputing the whole
+   * neighbourhood graph on every pointer move; the colours catch up as soon as
+   * movement pauses.
+   */
+  function scheduleDensitySync(): void {
+    cancelDensitySync();
+    densityTimer = window.setTimeout(() => {
+      densityTimer = undefined;
+      recomputeDensity();
+    }, 120);
+  }
+
+  function applyCrowdRadius(radius: number): void {
+    if (!Number.isFinite(radius) || radius <= 0) return;
+    crowdRadius = Math.min(radius, MAX_CROWD_RADIUS);
+    cancelDensitySync();
+    recomputeDensity();
+  }
+
   function addMarker(photo: Photo): void {
     if (!photo.gps) return;
-    const marker = L.circleMarker([photo.gps.lat, photo.gps.lon], MARKER_STYLE)
+    const marker = L.circleMarker(
+      [photo.gps.lat, photo.gps.lon],
+      { ...MARKER_STYLE, ...markerStyle(photo.id) },
+    )
       .bindTooltip(photo.name, { direction: 'top', offset: [0, -6] })
       .addTo(layer);
     markers.set(photo.id, marker);
   }
+
+  const crowdRadiusControl = createCrowdRadiusControl(
+    DEFAULT_CROWD_RADIUS,
+    applyCrowdRadius,
+  );
+  crowdRadiusControl.addTo(map);
 
   return {
     map,
@@ -190,13 +333,14 @@ export function createMapView(container: HTMLElement): MapView {
         cancelAnimationFrame(seriesFrame);
         seriesFrame = undefined;
       }
+      cancelDensitySync();
+      recomputeDensity();
       syncSeries();
     },
 
-    syncSelection(selection: Set<string>): void {
-      for (const [id, marker] of markers) {
-        marker.setStyle({ fillColor: selection.has(id) ? '#e0a020' : '#1f6feb' });
-      }
+    syncSelection(nextSelection: Set<string>): void {
+      selection = nextSelection;
+      applyMarkerStyles();
     },
 
     updateMarker(photo: Photo): void {
@@ -208,6 +352,7 @@ export function createMapView(container: HTMLElement): MapView {
           markers.delete(photo.id);
         }
         scheduleSeriesSync();
+        scheduleDensitySync();
         return;
       }
       if (marker) {
@@ -216,6 +361,7 @@ export function createMapView(container: HTMLElement): MapView {
         addMarker(photo);
       }
       scheduleSeriesSync();
+      scheduleDensitySync();
     },
 
     fit(photos: Photo[]): void {

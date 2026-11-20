@@ -56,6 +56,7 @@ export function createLanding(handlers: LandingHandlers): LandingView {
       <li><strong>Review the images.</strong> The sidebar lists images without GPS data or in an unsupported format (.png, .webp, etc.). Drag an image without GPS from the sidebar onto the map to give it a location.</li>
       <li><strong>Select the photos to fix.</strong> Click a marker, or drag a window around several. Add or remove from your selection as needed.</li>
       <li><strong>Move your selection</strong> to a new location to correct for GPS drift. The whole selection moves together, and the new GPS coordinates are written to the files when you release the mouse. Undo/redo moves.</li>
+      <li><strong>Spot clusters.</strong> Markers turn from blue through purple to red where many photos are close together. Change the crowd radius at the top right to control what counts as close.</li>
       <li><strong>Clean up.</strong> Delete unwanted files permanently (files are not moved to the system trash).</li>
       <li><strong>Check the result.</strong> Switch layers and zoom or pan to confirm the new positions.</li>
     </ol>
